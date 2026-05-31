@@ -448,7 +448,7 @@ function sendEmailNotification(data, imageLinks) {
 
   const rooms      = Array.isArray(data.rooms) ? data.rooms : [];
   const firstName  = data.ho_ten ? data.ho_ten.split(" ").pop() : "Khách";
-  const subject    = "[FELISEDE] Tư vấn mới từ " + (data.ho_ten || "Khách hàng") + " – " + ts;
+  const subject    = "[FELISEDE] Tư vấn mới từ " + (data.ho_ten || "Khách hàng");
 
   const roomRowsHtml = rooms.map(function(r) {
     const imgs = (imageLinks || []).filter(function(l) { return l.room === r.room; });
@@ -607,7 +607,13 @@ function sendEmailNotification(data, imageLinks) {
     "- Materials: " + formatMaterials(data.materials)
   ].join("\n");
 
-  MailApp.sendEmail({ to: OWNER_EMAIL, subject: subject, htmlBody: htmlBody, body: plainBody });
+  let pdfAttachments = [];
+  try {
+    pdfAttachments = [generateSubmissionPdf(data, imageLinks)];
+  } catch (pdfErr) {
+    console.warn("[PDF] Failed to generate:", pdfErr.message);
+  }
+  MailApp.sendEmail({ to: OWNER_EMAIL, subject: subject, htmlBody: htmlBody, body: plainBody, attachments: pdfAttachments });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -622,6 +628,111 @@ function infoRow(label, value) {
       </tr></table>
     </td>
   </tr>`;
+}
+
+function generateSubmissionPdf(data, imageLinks) {
+  const ts = data.timestamp
+    ? Utilities.formatDate(new Date(data.timestamp), TIMEZONE, "dd/MM/yyyy HH:mm:ss")
+    : Utilities.formatDate(new Date(), TIMEZONE, "dd/MM/yyyy HH:mm:ss");
+
+  const doc  = DocumentApp.create("_temp_khaosat_" + (data.submission_id || Date.now()));
+  const body = doc.getBody();
+  body.setMarginTop(36).setMarginBottom(36).setMarginLeft(54).setMarginRight(54);
+
+  function h1(text) {
+    const p = body.appendParagraph(text);
+    p.setHeading(DocumentApp.ParagraphHeading.HEADING1);
+    p.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    p.editAsText().setForegroundColor("#8B6914");
+  }
+  function h2(text) {
+    const p = body.appendParagraph(text);
+    p.setHeading(DocumentApp.ParagraphHeading.HEADING2);
+    p.editAsText().setForegroundColor("#5A3A0A");
+  }
+  function row(label, value) {
+    if (!value && value !== 0) return;
+    const lbl = label + ": ";
+    const p = body.appendParagraph(lbl + String(value));
+    p.editAsText().setBold(0, lbl.length - 1, true);
+  }
+
+  h1("FELISEDE – PHIEU KHAO SAT NOI THAT");
+  body.appendParagraph("Thoi gian: " + ts).setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  body.appendHorizontalRule();
+
+  h2("1. THONG TIN DU AN");
+  row("Chu dau tu", data.chu_dau_tu || data.ho_ten || "");
+  row("So dien thoai", data.so_dien_thoai || "");
+  row("Email", data.email || "");
+  row("Dia chi thi cong", data.dia_chi || "");
+  row("Dien tich", data.dien_tich ? data.dien_tich + " m2" : "");
+  row("Loai cong trinh", data.loai_cong_trinh || "");
+  row("Nguon khach", data.nguon_khach || "");
+
+  h2("2. HO SO NGUOI SU DUNG");
+  row("Do tuoi, nghe nghiep", data.ho_so_nguoi_dung || "");
+  row("Email ho so", data.email_ho_so || "");
+  row("Thoi quen sinh hoat", Array.isArray(data.thoi_quen) ? data.thoi_quen.join(", ") : (data.thoi_quen || ""));
+  row("So thich", Array.isArray(data.so_thich) ? data.so_thich.join(", ") : (data.so_thich || ""));
+
+  h2("3. MUC TIEU & MONG MUON");
+  row("Ly do xay dung", data.ly_do || "");
+  row("Ky vong chinh", Array.isArray(data.ky_vong) ? data.ky_vong.join(", ") : (data.ky_vong || ""));
+  row("Uu tien hang dau", data.uu_tien || "");
+
+  const rooms = Array.isArray(data.rooms) ? data.rooms : [];
+  h2("4. PHONG THIET KE (" + rooms.length + " phong)");
+  rooms.forEach(function(r, i) {
+    const rp = body.appendParagraph("  " + (i + 1) + ". " + (r.room || ""));
+    rp.editAsText().setBold(true);
+    if (r.dien_tich) body.appendParagraph("     Dien tich: " + r.dien_tich + " m2");
+    const yeuCau = Array.isArray(r.yeu_cau) ? r.yeu_cau.join(", ") : (r.yeu_cau || "");
+    if (yeuCau) body.appendParagraph("     Yeu cau: " + yeuCau);
+    if (r.ghi_chu) body.appendParagraph("     Ghi chu: " + r.ghi_chu);
+  });
+
+  h2("5. PHONG CACH & MAU SAC");
+  const stylesArr = Array.isArray(data.design_styles) ? data.design_styles
+    : (Array.isArray(data.phong_cach) ? data.phong_cach : []);
+  row("Phong cach ua thich", stylesArr.join(", "));
+  const combos = Array.isArray(data.colour_combo) ? data.colour_combo : [];
+  combos.forEach(function(c) { body.appendParagraph("  - " + c); });
+
+  h2("6. VAT LIEU UU TIEN");
+  if (data.materials && typeof data.materials === "object" && !Array.isArray(data.materials)) {
+    Object.keys(data.materials).forEach(function(cat) {
+      const vals = Array.isArray(data.materials[cat]) ? data.materials[cat] : [String(data.materials[cat] || "")];
+      row(cat, vals.join(", "));
+    });
+  }
+
+  h2("7. KHAO SAT THEM");
+  row("Ngan sach du kien", data.ngan_sach || "");
+  row("Uu tien phan bo", data.uu_tien_phan_bo || "");
+  row("Muc hoan thien", data.muc_hoan_thien || "");
+  row("Thoi gian hoan thanh", data.thoi_gian_thi_cong || "");
+  row("Moc thoi gian quan trong", data.cac_moc_quan_trong || "");
+  row("Phong cach mong muon", data.khao_sat_phong_cach || "");
+  row("Ghet dieu gi trong khong gian", data.khao_sat_khong_gian || "");
+  row("Yeu cau dac biet", data.yeu_cau_dac_biet || "");
+
+  if (imageLinks && imageLinks.length) {
+    h2("8. ANH PHONG CACH THAM KHAO");
+    imageLinks.forEach(function(l) {
+      body.appendParagraph("  - " + (l.filename || "") + ": " + (l.url || ""));
+    });
+  }
+
+  doc.saveAndClose();
+
+  const file    = DriveApp.getFileById(doc.getId());
+  const pdfBlob = file.getAs(MimeType.PDF);
+  const safeName = (data.ho_ten || "KhachHang").replace(/[\/\\:*?"<>|]/g, "_");
+  pdfBlob.setName("FELISEDE_KhaoSat_" + safeName + ".pdf");
+  file.setTrashed(true);
+
+  return pdfBlob;
 }
 
 function formatMaterials(materials) {
